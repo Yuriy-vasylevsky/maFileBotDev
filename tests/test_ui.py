@@ -1,7 +1,14 @@
 from types import SimpleNamespace
 
 from app.i18n import tr
-from app.ui import admin_menu, code_availability_text, home_rows, persistent_menu, purchase_rows
+from app.ui import (
+    admin_menu,
+    code_availability_text,
+    code_timer_notice,
+    home_rows,
+    persistent_menu,
+    purchase_rows,
+)
 
 
 def test_home_inline_menu_has_only_catalog_sections():
@@ -57,11 +64,14 @@ def test_code_availability_explains_single_code_and_timed_multiple_codes():
     single = SimpleNamespace(steam_authenticator_id=1, code_limit=1, code_cooldown_hours=0)
     timed = SimpleNamespace(steam_authenticator_id=1, code_limit=2, code_cooldown_hours=48)
 
-    assert "180 днів" in code_availability_text(single, "ua")
-    timed_text = code_availability_text(timed, "ua")
-    assert "180 днів" in timed_text
-    assert "48 год." in timed_text
-    assert "Решту кодів" in timed_text
+    expected = (
+        "ℹ️ Код Steam Guard можна отримати протягом 180 днів після покупки "
+        "в розділі «🛒 Мої покупки»."
+    )
+    assert code_availability_text(single, "ua") == expected
+    assert code_availability_text(timed, "ua") == expected
+    assert code_timer_notice(single, "ua") == ""
+    assert "48 год." in code_timer_notice(timed, "ua")
 
 
 def test_purchase_code_confirmation_preserves_purchases_page():

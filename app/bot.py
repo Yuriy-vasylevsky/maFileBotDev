@@ -50,6 +50,7 @@ from app.services import (
 )
 from app.ui import (
     back,
+    code_timer_notice,
     copy_card_rows,
     discounted_price_text,
     home_rows,
@@ -2105,10 +2106,13 @@ def create_dispatcher(shop, storage):
         )
 
     @router.callback_query(F.data.regexp(r"^code_request:[a-f0-9]{32}(?::\d+)?$"))
-    async def confirm_code_request(callback, lang):
+    async def confirm_code_request(callback, session, lang):
         _, order_id, *source = callback.data.split(":")
         code_target = f"code:{order_id}:{source[0]}" if source else f"code:{order_id}"
         purchase_target = f"purchase:{order_id}:{source[0]}" if source else f"purchase:{order_id}"
+        order = await session.get(Order, order_id)
+        product = await session.get(Product, order.product_id) if order else None
+        timer_notice = code_timer_notice(product, lang) if product else ""
         text = (
             "⚠️ <b>Отримати Steam Guard-код?</b>\n\n"
             "Код дійсний лише <b>30 секунд</b>. Після підтвердження буде використано "
@@ -2120,6 +2124,8 @@ def create_dispatcher(shop, storage):
             "одна доступная активация кода.\n\n"
             "Подтвердите, когда будете готовы сразу ввести код, или отмените запрос."
         )
+        if timer_notice:
+            text += f"\n\n{timer_notice}"
         await render(
             callback,
             text,

@@ -144,21 +144,19 @@ def aware_datetime(value):
 def code_availability_text(product, lang):
     if not product.steam_authenticator_id:
         return ""
-    availability = (
-        "⏳ <b>Steam Guard-код доступний протягом 180 днів після покупки.</b>"
-        if lang == "ua"
-        else "⏳ <b>Код Steam Guard доступен в течение 180 дней после покупки.</b>"
-    )
+    return f"ℹ️ {tr('code_retry_hint', lang)}"
+
+
+def code_timer_notice(product, lang):
     if product.code_limit >= 2 and product.code_cooldown_hours > 0:
-        timer_notice = (
+        return (
             f"⌛ <b>Решту кодів можна отримати протягом {product.code_cooldown_hours} год. "
             "після отримання першого коду.</b>"
             if lang == "ua"
             else f"⌛ <b>Остальные коды можно получить в течение {product.code_cooldown_hours} ч. "
             "после получения первого кода.</b>"
         )
-        return f"{availability}\n{timer_notice}"
-    return availability
+    return ""
 
 
 def purchase_text(order, product, lang, vault):
