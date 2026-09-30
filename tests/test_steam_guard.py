@@ -1,0 +1,108 @@
+import base64
+import json
+from datetime import timedelta
+
+import pytest
+from sqlalchemy import select
+
+from app.models import MailCodeRequest, Order, Product, SteamAuthenticator, now
+from app.services import ShopError
+from app.steam_guard import fresh_code_wait_seconds, generate_steam_guard_code, parse_mafile
+
+
+def test_parse_mafile_keeps_only_required_fields():
+    secret = base64.b64encode(b"01234567890123456789").decode()
+    parsed = parse_mafile(
+        json.dumps(
+            {
+                "account_name": "test_account",
+                "shared_secret": secret,
+                "identity_secret": "must-not-be-kept",
+                "revocation_code": "must-not-be-kept",
+                "Session": {"SteamID": 76561198000000000, "OAuthToken": "must-not-be-kept"},
+            }
+        ).encode()
+    )
+
+    assert parsed == {
+        "account_name": "test_account",
+        "steam_id": "76561198000000000",
+        "shared_secret": secret,
+    }
+
+
+def test_generate_steam_guard_code_is_stable_for_time_window():
+    secret = base64.b64encode(b"01234567890123456789").decode()
+    assert generate_steam_guard_code(secret, 1_700_000_000) == "N3FRN"
+    assert generate_steam_guard_code(secret, 1_700_000_001) == "N3FRN"
+
+
+def test_fresh_code_waits_unless_at_least_26_seconds_remain():
+    assert fresh_code_wait_seconds(60) == 0
+    assert fresh_code_wait_seconds(64) == 0
+    assert fresh_code_wait_seconds(65) == 26
+    assert fresh_code_wait_seconds(89.5) == 1
+
+
+def test_parse_mafile_rejects_missing_or_invalid_secret():
+    with pytest.raises(ValueError, match="shared_secret"):
+        parse_mafile(b'{"account_name":"test"}')
+    with pytest.raises(ValueError, match="shared_secret"):
+        parse_mafile(b'{"account_name":"test","shared_secret":"not-base64"}')
+
+
+async def test_shop_generates_code_only_for_order_owner_and_tracks_limit(shop, monkeypatch):
+    monkeypatch.setattr("app.services.fresh_code_wait_seconds", lambda: 0)
+    secret = base64.b64encode(b"01234567890123456789").decode()
+    async with shop.sessions() as session, session.begin():
+        authenticator = SteamAuthenticator(
+            account_name="test_account",
+            steam_id="76561198000000000",
+            shared_secret_encrypted=shop.vault.encrypt(secret),
+        )
+        session.add(authenticator)
+        await session.flush()
+        product = await session.get(Product, 1)
+        product.steam_authenticator_id = authenticator.id
+        product.code_limit = 1
+        order = await session.get(Order, "a" * 32)
+        order.status = "delivered"
+        order.paid_at = now()
+
+    code = await shop.code(1, "a" * 32)
+    assert len(code) == 5
+    async with shop.sessions() as session:
+        request = await session.get(MailCodeRequest, 1)
+        assert request.outcome == "found"
+
+    with pytest.raises(ShopError, match="code_limit"):
+        await shop.code(1, "a" * 32)
+    with pytest.raises(ShopError, match="missing"):
+        await shop.code(2, "a" * 32)
+
+
+async def test_shop_allows_codes_during_timer_and_blocks_them_after_it_expires(shop, monkeypatch):
+    monkeypatch.setattr("app.services.fresh_code_wait_seconds", lambda: 0)
+    async with shop.sessions() as session, session.begin():
+        product = await session.get(Product, 1)
+        product.steam_authenticator_id = 1
+        product.code_limit = 3
+        product.code_cooldown_hours = 3
+        order = await session.get(Order, "a" * 32)
+        order.status = "delivered"
+        order.paid_at = now()
+
+    assert len(await shop.code(1, "a" * 32)) == 5
+    assert len(await shop.code(1, "a" * 32)) == 5
+
+    async with shop.sessions() as session, session.begin():
+        requests = (
+            await session.scalars(
+                select(MailCodeRequest).where(MailCodeRequest.order_id == "a" * 32)
+            )
+        ).all()
+        for request in requests:
+            request.created_at = now() - timedelta(hours=4)
+
+    with pytest.raises(ShopError, match="^code_timer_expired$"):
+        await shop.code(1, "a" * 32)
