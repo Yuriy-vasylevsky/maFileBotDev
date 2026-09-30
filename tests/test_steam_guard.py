@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import MailCodeRequest, Order, Product, SteamAuthenticator, now
-from app.services import ShopError
+from app.services import ShopError, code_timer_expired
 from app.steam_guard import fresh_code_wait_seconds, generate_steam_guard_code, parse_mafile
 
 
@@ -49,6 +49,15 @@ def test_parse_mafile_rejects_missing_or_invalid_secret():
         parse_mafile(b'{"account_name":"test"}')
     with pytest.raises(ValueError, match="shared_secret"):
         parse_mafile(b'{"account_name":"test","shared_secret":"not-base64"}')
+
+
+def test_code_timer_only_applies_to_multiple_code_products():
+    first_code_at = now() - timedelta(hours=4)
+    single = Product(code_limit=1, code_cooldown_hours=3)
+    multiple = Product(code_limit=2, code_cooldown_hours=3)
+
+    assert code_timer_expired(single, first_code_at) is False
+    assert code_timer_expired(multiple, first_code_at) is True
 
 
 async def test_shop_generates_code_only_for_order_owner_and_tracks_limit(shop, monkeypatch):

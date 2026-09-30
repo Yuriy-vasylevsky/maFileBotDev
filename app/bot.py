@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from contextlib import suppress
-from datetime import datetime, timedelta
+from datetime import datetime
 from html import escape
 from io import BytesIO
 from zoneinfo import ZoneInfo
@@ -36,6 +36,7 @@ from app.services import (
     apply_discount,
     aware,
     code_request_window_open,
+    code_timer_expired,
     configured_manual_card,
     first_promo_product,
     has_recent_purchase,
@@ -2074,11 +2075,7 @@ def create_dispatcher(shop, storage):
                 MailCodeRequest.outcome == "found",
             )
         )
-        code_timer_expired = bool(
-            first_code_at
-            and product.code_cooldown_hours > 0
-            and aware(first_code_at) + timedelta(hours=product.code_cooldown_hours) <= now()
-        )
+        timer_expired = code_timer_expired(product, first_code_at)
         purchase_details = purchase_text(order, product, lang, shop.vault)
         if code_limit_exhausted:
             purchase_details += (
@@ -2086,7 +2083,7 @@ def create_dispatcher(shop, storage):
                 if lang == "ua"
                 else "\n\n⚠️ <b>Лимит кодов исчерпан, обратитесь к администратору.</b>"
             )
-        elif code_timer_expired:
+        elif timer_expired:
             purchase_details += (
                 "\n\n⏳ <b>Час для отримання кодів завершився, зверніться до адміна.</b>"
                 if lang == "ua"
@@ -2101,8 +2098,8 @@ def create_dispatcher(shop, storage):
                 support,
                 bool(product.steam_authenticator_id and code_request_window_open(order)),
                 remaining_codes,
-                code_request_available=remaining_codes > 0 and not code_timer_expired,
-                code_limit_exhausted=code_limit_exhausted or code_timer_expired,
+                code_request_available=remaining_codes > 0 and not timer_expired,
+                code_limit_exhausted=code_limit_exhausted or timer_expired,
                 return_target=return_target,
             ),
         )

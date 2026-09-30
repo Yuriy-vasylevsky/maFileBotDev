@@ -59,6 +59,16 @@ def code_request_window_open(order, current=None):
     return bool(order.paid_at and aware(order.paid_at) + CODE_REQUEST_WINDOW >= (current or now()))
 
 
+def code_timer_expired(product, first_code_at):
+    """Check the shorter window used only when a purchase includes multiple codes."""
+    return bool(
+        product.code_limit >= 2
+        and first_code_at
+        and product.code_cooldown_hours > 0
+        and aware(first_code_at) + timedelta(hours=product.code_cooldown_hours) <= now()
+    )
+
+
 async def setting(session, key, default=""):
     row = await session.get(Setting, key)
     return row.value if row else default
@@ -849,15 +859,14 @@ class Shop:
             )
             if used >= product.code_limit:
                 raise ShopError("code_limit")
-            if used and product.code_cooldown_hours > 0:
+            if used and product.code_limit >= 2 and product.code_cooldown_hours > 0:
                 first_code_at = await session.scalar(
                     select(func.min(MailCodeRequest.created_at)).where(
                         MailCodeRequest.order_id == order.id,
                         MailCodeRequest.outcome == "found",
                     )
                 )
-                available_until = aware(first_code_at) + timedelta(hours=product.code_cooldown_hours)
-                if available_until <= now():
+                if code_timer_expired(product, first_code_at):
                     raise ShopError("code_timer_expired")
             request = MailCodeRequest(
                 user_id=user_id,
