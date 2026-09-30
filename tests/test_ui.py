@@ -58,7 +58,10 @@ def test_code_availability_explains_single_code_and_timed_multiple_codes():
     timed = SimpleNamespace(steam_authenticator_id=1, code_limit=2, code_cooldown_hours=48)
 
     assert "180 днів" in code_availability_text(single, "ua")
-    assert "48 год." in code_availability_text(timed, "ua")
+    timed_text = code_availability_text(timed, "ua")
+    assert "180 днів" in timed_text
+    assert "48 год." in timed_text
+    assert "Решту кодів" in timed_text
 
 
 def test_purchase_code_confirmation_preserves_purchases_page():
